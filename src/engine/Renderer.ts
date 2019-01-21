@@ -1,9 +1,10 @@
-import { combineLatest, Subject } from "rxjs";
+import { combineLatest, fromEvent, Subject } from "rxjs";
 import { filter, map, sample } from "rxjs/operators";
-import { objects$, setPlayer$, ticker$ } from "./Core";
+import { ticker$ } from "./Core";
+import { IGameObject, objects$ } from "./Objects";
 
-export const setCanvas$ = new Subject<string>();
-const onSetCanvasEvent = setCanvas$.pipe(
+const setCanvas$ = new Subject<string>();
+const onSetCanvasEvent$ = setCanvas$.pipe(
     map((id: string) => document.getElementById(id) as HTMLCanvasElement),
     filter((canvas) => !!canvas),
     map((canvas: HTMLCanvasElement) => ({
@@ -11,28 +12,22 @@ const onSetCanvasEvent = setCanvas$.pipe(
         context: canvas.getContext("2d"),
     })),
 );
-const PADDLE_WIDTH = 100;
-const PADDLE_HEIGHT = 20;
 
-const renderer$ = combineLatest(ticker$, onSetCanvasEvent, objects$, setPlayer$)
-                    .pipe(
-                        sample(ticker$),
-                    );
+const renderer$ = combineLatest(ticker$, onSetCanvasEvent$, objects$)
+    .pipe(
+        filter(([ticker, { canvas, context }]) => (!!canvas && !!context)),
+        sample(ticker$),
+        map(([ticker, {canvas, context}, objects]) => ({canvas, context, objects})),
+    );
 
-renderer$.subscribe(draw);
-function draw([ticker, { canvas, context}, objects, player]: any) {
+export function DEFAULT_DRAW_SPRITE({canvas, context, objects}: any) {
     context.clearRect(0, 0, canvas.width, canvas.height);
-    drawPaddle(context, player.data.x);
+    objects.forEach((element: IGameObject) => {
+        element.draw(element, canvas, context);
+    });
 }
 
-function drawPaddle(context: CanvasRenderingContext2D, position: number) {
-    context.beginPath();
-    context.rect(
-        position - PADDLE_WIDTH / 2,
-        context.canvas.height - PADDLE_HEIGHT,
-        PADDLE_WIDTH,
-        PADDLE_HEIGHT,
-    );
-    context.fill();
-    context.closePath();
+export function initRenderer(canvasId: string, drawFunction: ({canvas, context, objects}: any) => void) {
+    fromEvent(window, "load").subscribe(() => setCanvas$.next(canvasId));
+    renderer$.subscribe(drawFunction);
 }

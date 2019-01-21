@@ -2052,14 +2052,6 @@
     /** PURE_IMPORTS_START _Observable PURE_IMPORTS_END */
 
     /** PURE_IMPORTS_START  PURE_IMPORTS_END */
-    function ArgumentOutOfRangeErrorImpl() {
-        Error.call(this);
-        this.message = 'argument out of range';
-        this.name = 'ArgumentOutOfRangeError';
-        return this;
-    }
-    ArgumentOutOfRangeErrorImpl.prototype = /*@__PURE__*/ Object.create(Error.prototype);
-    var ArgumentOutOfRangeError = ArgumentOutOfRangeErrorImpl;
 
     /** PURE_IMPORTS_START  PURE_IMPORTS_END */
     function EmptyErrorImpl() {
@@ -4019,28 +4011,6 @@
     /** PURE_IMPORTS_START _tap,_util_EmptyError PURE_IMPORTS_END */
 
     /** PURE_IMPORTS_START tslib,_Subscriber,_util_ArgumentOutOfRangeError,_observable_empty PURE_IMPORTS_END */
-    function take(count) {
-        return function (source) {
-            if (count === 0) {
-                return empty$1();
-            }
-            else {
-                return source.lift(new TakeOperator(count));
-            }
-        };
-    }
-    var TakeOperator = /*@__PURE__*/ (function () {
-        function TakeOperator(total) {
-            this.total = total;
-            if (this.total < 0) {
-                throw new ArgumentOutOfRangeError;
-            }
-        }
-        TakeOperator.prototype.call = function (subscriber, source) {
-            return source.subscribe(new TakeSubscriber(subscriber, this.total));
-        };
-        return TakeOperator;
-    }());
     var TakeSubscriber = /*@__PURE__*/ (function (_super) {
         __extends(TakeSubscriber, _super);
         function TakeSubscriber(destination, total) {
@@ -5968,6 +5938,15 @@
 
     /** PURE_IMPORTS_START  PURE_IMPORTS_END */
 
+    var ticker$ = interval(1000 / 60, animationFrame)
+        .pipe(map(function () { return ({
+        deltaTime: 0,
+        time: Date.now(),
+    }); }), scan(function (previous, current) { return ({
+        deltaTime: (current.time - previous.time) / 1000,
+        time: current.time,
+    }); }));
+
     var input$ = merge(fromEvent(document, "keydown").pipe(map(function (event) { return ({ key: event.key, pressed: true }); })), fromEvent(document, "keyup").pipe(map(function (event) { return ({ key: event.key, pressed: false }); }))).pipe(distinctUntilChanged(function (prev, next) { return prev.key === next.key && prev.pressed === next.pressed; }), scan(function (store, add) {
         if (add.pressed) {
             store.push(add.key);
@@ -5978,20 +5957,11 @@
         return store;
     }, []));
 
-    var ticker$ = interval(1000 / 60, animationFrame)
-        .pipe(map(function () { return ({
-        deltaTime: 0,
-        time: Date.now(),
-    }); }), scan(function (previous, current) { return ({
-        deltaTime: (current.time - previous.time) / 1000,
-        time: current.time,
-    }); }));
     var addObject$ = new Subject();
     var removeObject$ = new Subject();
-    var setPlayer$ = new Subject();
-    var onAddObjectEvent$ = merge(addObject$, setPlayer$.pipe(take(1))).pipe(filter(function () { return true; }), // TODO sanitize
+    var onAddObjectEvent$ = merge(addObject$).pipe(filter(function () { return true; }), // TODO sanitize
     map(function (obj) { return ({
-        data: obj.data,
+        data: obj,
         type: "add",
     }); }));
     var onRemoveObjectEvent$ = removeObject$.pipe(filter(function (obj) { return true; }), // TODO sanitize
@@ -6003,55 +5973,98 @@
         var obj = item.data;
         switch (item.type) {
             case "add":
-                store.set(obj.id, obj);
-                break;
+                return store.set(obj.id, obj);
             case "remove":
                 store.delete(obj.id);
                 break;
         }
         return store;
     }, new Map()), share());
-    var onPlayerMove$ = combineLatest(ticker$, input$, setPlayer$, objects$).pipe(sample(ticker$), map(function (_a) {
-        var ticker = _a[0], input = _a[1], player = _a[2], objects = _a[3];
-        return ({ input: input, player: player, objects: objects });
-    }));
 
     var setCanvas$ = new Subject();
-    var onSetCanvasEvent = setCanvas$.pipe(map(function (id) { return document.getElementById(id); }), filter(function (canvas) { return !!canvas; }), map(function (canvas) { return ({
+    var onSetCanvasEvent$ = setCanvas$.pipe(map(function (id) { return document.getElementById(id); }), filter(function (canvas) { return !!canvas; }), map(function (canvas) { return ({
         canvas: canvas,
         context: canvas.getContext("2d"),
     }); }));
-    var PADDLE_WIDTH = 100;
-    var PADDLE_HEIGHT = 20;
-    var renderer$ = combineLatest(ticker$, onSetCanvasEvent, objects$, setPlayer$)
-        .pipe(sample(ticker$));
-    renderer$.subscribe(draw);
-    function draw(_a) {
-        var ticker = _a[0], _b = _a[1], canvas = _b.canvas, context = _b.context, objects = _a[2], player = _a[3];
+    var renderer$ = combineLatest(ticker$, onSetCanvasEvent$, objects$)
+        .pipe(filter(function (_a) {
+        var ticker = _a[0], _b = _a[1], canvas = _b.canvas, context = _b.context;
+        return (!!canvas && !!context);
+    }), sample(ticker$), map(function (_a) {
+        var ticker = _a[0], _b = _a[1], canvas = _b.canvas, context = _b.context, objects = _a[2];
+        return ({ canvas: canvas, context: context, objects: objects });
+    }));
+    function DEFAULT_DRAW_SPRITE(_a) {
+        var canvas = _a.canvas, context = _a.context, objects = _a.objects;
         context.clearRect(0, 0, canvas.width, canvas.height);
-        drawPaddle(context, player.data.x);
+        objects.forEach(function (element) {
+            element.draw(element, canvas, context);
+        });
     }
-    function drawPaddle(context, position) {
-        context.beginPath();
-        context.rect(position - PADDLE_WIDTH / 2, context.canvas.height - PADDLE_HEIGHT, PADDLE_WIDTH, PADDLE_HEIGHT);
-        context.fill();
-        context.closePath();
+    function initRenderer(canvasId, drawFunction) {
+        fromEvent(window, "load").subscribe(function () { return setCanvas$.next(canvasId); });
+        renderer$.subscribe(drawFunction);
     }
 
     // tslint:disable:no-console
-    fromEvent(window, "load").subscribe(function () {
-        setCanvas$.next("game");
-        ticker$.subscribe();
-        onPlayerMove$.subscribe(function (_a) {
-            var input = _a.input, player = _a.player, objects = _a.objects;
-            if (input.includes("d")) {
-                player.data.x += 10;
-            }
-            if (input.includes("a")) {
-                player.data.x -= 10;
-            }
+    initRenderer("game", DEFAULT_DRAW_SPRITE);
+    combineLatest(ticker$, objects$)
+        .pipe(sample(ticker$), map(function (_a) {
+        var time = _a[0], gameObjects = _a[1];
+        return Array.from(gameObjects.values());
+    }))
+        .subscribe(function (gameObjects) {
+        gameObjects.forEach(function (element) {
+            element.location.x += element.velocity.x;
+            element.location.y += element.velocity.y;
         });
-        setPlayer$.next({ id: "player", data: { x: 0, y: 0 } });
+    });
+    combineLatest(ticker$, input$, objects$)
+        .pipe(sample(ticker$))
+        .subscribe(function (_a) {
+        var time = _a[0], keys = _a[1], objects = _a[2];
+        var player = objects.get("player");
+        if (player) {
+            if (keys.includes("d")) {
+                player.velocity.x = 5;
+            }
+            else if (keys.includes("a")) {
+                player.velocity.x = -5;
+            }
+            else {
+                player.velocity.x = 0;
+            }
+            if (keys.includes("w")) {
+                addObject$.next({
+                    draw: function (gameObjects, canvas, context) {
+                        var position = gameObjects.location;
+                        var WIDTH = 20;
+                        var HEIGHT = 20;
+                        context.beginPath();
+                        context.rect(position.x - WIDTH / 2, position.y, WIDTH, HEIGHT);
+                        context.fill();
+                        context.closePath();
+                    },
+                    id: "bullet",
+                    location: { x: player.location.x, y: player.location.y - 40 },
+                    velocity: { x: player.velocity.x, y: -2 },
+                });
+            }
+        }
+    });
+    addObject$.next({
+        draw: function (gameObject, canvas, context) {
+            var position = gameObject.location;
+            var PADDLE_WIDTH = 100;
+            var PADDLE_HEIGHT = 20;
+            context.beginPath();
+            context.rect(position.x - PADDLE_WIDTH / 2, position.y, PADDLE_WIDTH, PADDLE_HEIGHT);
+            context.fill();
+            context.closePath();
+        },
+        id: "player",
+        location: { x: 0, y: 500 - 20 },
+        velocity: { x: 0, y: 0 },
     });
 
 }());
