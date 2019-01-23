@@ -20,7 +20,7 @@ const renderer$ = combineLatest(ticker$, onSetCanvasEvent$, objects$)
         map(([ticker, {canvas, context}, objects]) => ({canvas, context, objects})),
     );
 
-export function DEFAULT_DRAW_SPRITE({canvas, context, objects}: any) {
+export function DEFAULT_DRAW_SPRITE({canvas, context, objects}: {canvas: HTMLCanvasElement, context: CanvasRenderingContext2D, objects: Map<string, IGameObject>}) {
     context.clearRect(0, 0, canvas.width, canvas.height);
     objects.forEach((element: IGameObject) => {
         element.draw(element, canvas, context);

@@ -5316,6 +5316,10 @@
     }(Subscriber));
 
     /** PURE_IMPORTS_START tslib,_OuterSubscriber,_util_subscribeToResult PURE_IMPORTS_END */
+    var defaultThrottleConfig = {
+        leading: true,
+        trailing: false
+    };
     var ThrottleSubscriber = /*@__PURE__*/ (function (_super) {
         __extends(ThrottleSubscriber, _super);
         function ThrottleSubscriber(destination, durationSelector, _leading, _trailing) {
@@ -5383,6 +5387,27 @@
     }(OuterSubscriber));
 
     /** PURE_IMPORTS_START tslib,_Subscriber,_scheduler_async,_throttle PURE_IMPORTS_END */
+    function throttleTime(duration, scheduler, config) {
+        if (scheduler === void 0) {
+            scheduler = async;
+        }
+        if (config === void 0) {
+            config = defaultThrottleConfig;
+        }
+        return function (source) { return source.lift(new ThrottleTimeOperator(duration, scheduler, config.leading, config.trailing)); };
+    }
+    var ThrottleTimeOperator = /*@__PURE__*/ (function () {
+        function ThrottleTimeOperator(duration, scheduler, leading, trailing) {
+            this.duration = duration;
+            this.scheduler = scheduler;
+            this.leading = leading;
+            this.trailing = trailing;
+        }
+        ThrottleTimeOperator.prototype.call = function (subscriber, source) {
+            return source.subscribe(new ThrottleTimeSubscriber(subscriber, this.duration, this.scheduler, this.leading, this.trailing));
+        };
+        return ThrottleTimeOperator;
+    }());
     var ThrottleTimeSubscriber = /*@__PURE__*/ (function (_super) {
         __extends(ThrottleTimeSubscriber, _super);
         function ThrottleTimeSubscriber(destination, duration, scheduler, leading, trailing) {
@@ -5957,25 +5982,249 @@
         return store;
     }, []));
 
+    function createCommonjsModule(fn, module) {
+    	return module = { exports: {} }, fn(module, module.exports), module.exports;
+    }
+
+    var rngBrowser = createCommonjsModule(function (module) {
+    // Unique ID creation requires a high quality random # generator.  In the
+    // browser this is a little complicated due to unknown quality of Math.random()
+    // and inconsistent support for the `crypto` API.  We do the best we can via
+    // feature-detection
+
+    // getRandomValues needs to be invoked in a context where "this" is a Crypto
+    // implementation. Also, find the complete implementation of crypto on IE11.
+    var getRandomValues = (typeof(crypto) != 'undefined' && crypto.getRandomValues && crypto.getRandomValues.bind(crypto)) ||
+                          (typeof(msCrypto) != 'undefined' && typeof window.msCrypto.getRandomValues == 'function' && msCrypto.getRandomValues.bind(msCrypto));
+
+    if (getRandomValues) {
+      // WHATWG crypto RNG - http://wiki.whatwg.org/wiki/Crypto
+      var rnds8 = new Uint8Array(16); // eslint-disable-line no-undef
+
+      module.exports = function whatwgRNG() {
+        getRandomValues(rnds8);
+        return rnds8;
+      };
+    } else {
+      // Math.random()-based (RNG)
+      //
+      // If all else fails, use Math.random().  It's fast, but is of unspecified
+      // quality.
+      var rnds = new Array(16);
+
+      module.exports = function mathRNG() {
+        for (var i = 0, r; i < 16; i++) {
+          if ((i & 0x03) === 0) r = Math.random() * 0x100000000;
+          rnds[i] = r >>> ((i & 0x03) << 3) & 0xff;
+        }
+
+        return rnds;
+      };
+    }
+    });
+
+    /**
+     * Convert array of 16 byte values to UUID string format of the form:
+     * XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+     */
+    var byteToHex = [];
+    for (var i = 0; i < 256; ++i) {
+      byteToHex[i] = (i + 0x100).toString(16).substr(1);
+    }
+
+    function bytesToUuid(buf, offset) {
+      var i = offset || 0;
+      var bth = byteToHex;
+      // join used to fix memory issue caused by concatenation: https://bugs.chromium.org/p/v8/issues/detail?id=3175#c4
+      return ([bth[buf[i++]], bth[buf[i++]], 
+    	bth[buf[i++]], bth[buf[i++]], '-',
+    	bth[buf[i++]], bth[buf[i++]], '-',
+    	bth[buf[i++]], bth[buf[i++]], '-',
+    	bth[buf[i++]], bth[buf[i++]], '-',
+    	bth[buf[i++]], bth[buf[i++]],
+    	bth[buf[i++]], bth[buf[i++]],
+    	bth[buf[i++]], bth[buf[i++]]]).join('');
+    }
+
+    var bytesToUuid_1 = bytesToUuid;
+
+    // **`v1()` - Generate time-based UUID**
+    //
+    // Inspired by https://github.com/LiosK/UUID.js
+    // and http://docs.python.org/library/uuid.html
+
+    var _nodeId;
+    var _clockseq;
+
+    // Previous uuid creation time
+    var _lastMSecs = 0;
+    var _lastNSecs = 0;
+
+    // See https://github.com/broofa/node-uuid for API details
+    function v1(options, buf, offset) {
+      var i = buf && offset || 0;
+      var b = buf || [];
+
+      options = options || {};
+      var node = options.node || _nodeId;
+      var clockseq = options.clockseq !== undefined ? options.clockseq : _clockseq;
+
+      // node and clockseq need to be initialized to random values if they're not
+      // specified.  We do this lazily to minimize issues related to insufficient
+      // system entropy.  See #189
+      if (node == null || clockseq == null) {
+        var seedBytes = rngBrowser();
+        if (node == null) {
+          // Per 4.5, create and 48-bit node id, (47 random bits + multicast bit = 1)
+          node = _nodeId = [
+            seedBytes[0] | 0x01,
+            seedBytes[1], seedBytes[2], seedBytes[3], seedBytes[4], seedBytes[5]
+          ];
+        }
+        if (clockseq == null) {
+          // Per 4.2.2, randomize (14 bit) clockseq
+          clockseq = _clockseq = (seedBytes[6] << 8 | seedBytes[7]) & 0x3fff;
+        }
+      }
+
+      // UUID timestamps are 100 nano-second units since the Gregorian epoch,
+      // (1582-10-15 00:00).  JSNumbers aren't precise enough for this, so
+      // time is handled internally as 'msecs' (integer milliseconds) and 'nsecs'
+      // (100-nanoseconds offset from msecs) since unix epoch, 1970-01-01 00:00.
+      var msecs = options.msecs !== undefined ? options.msecs : new Date().getTime();
+
+      // Per 4.2.1.2, use count of uuid's generated during the current clock
+      // cycle to simulate higher resolution clock
+      var nsecs = options.nsecs !== undefined ? options.nsecs : _lastNSecs + 1;
+
+      // Time since last uuid creation (in msecs)
+      var dt = (msecs - _lastMSecs) + (nsecs - _lastNSecs)/10000;
+
+      // Per 4.2.1.2, Bump clockseq on clock regression
+      if (dt < 0 && options.clockseq === undefined) {
+        clockseq = clockseq + 1 & 0x3fff;
+      }
+
+      // Reset nsecs if clock regresses (new clockseq) or we've moved onto a new
+      // time interval
+      if ((dt < 0 || msecs > _lastMSecs) && options.nsecs === undefined) {
+        nsecs = 0;
+      }
+
+      // Per 4.2.1.2 Throw error if too many uuids are requested
+      if (nsecs >= 10000) {
+        throw new Error('uuid.v1(): Can\'t create more than 10M uuids/sec');
+      }
+
+      _lastMSecs = msecs;
+      _lastNSecs = nsecs;
+      _clockseq = clockseq;
+
+      // Per 4.1.4 - Convert from unix epoch to Gregorian epoch
+      msecs += 12219292800000;
+
+      // `time_low`
+      var tl = ((msecs & 0xfffffff) * 10000 + nsecs) % 0x100000000;
+      b[i++] = tl >>> 24 & 0xff;
+      b[i++] = tl >>> 16 & 0xff;
+      b[i++] = tl >>> 8 & 0xff;
+      b[i++] = tl & 0xff;
+
+      // `time_mid`
+      var tmh = (msecs / 0x100000000 * 10000) & 0xfffffff;
+      b[i++] = tmh >>> 8 & 0xff;
+      b[i++] = tmh & 0xff;
+
+      // `time_high_and_version`
+      b[i++] = tmh >>> 24 & 0xf | 0x10; // include version
+      b[i++] = tmh >>> 16 & 0xff;
+
+      // `clock_seq_hi_and_reserved` (Per 4.2.2 - include variant)
+      b[i++] = clockseq >>> 8 | 0x80;
+
+      // `clock_seq_low`
+      b[i++] = clockseq & 0xff;
+
+      // `node`
+      for (var n = 0; n < 6; ++n) {
+        b[i + n] = node[n];
+      }
+
+      return buf ? buf : bytesToUuid_1(b);
+    }
+
+    var v1_1 = v1;
+
+    function v4(options, buf, offset) {
+      var i = buf && offset || 0;
+
+      if (typeof(options) == 'string') {
+        buf = options === 'binary' ? new Array(16) : null;
+        options = null;
+      }
+      options = options || {};
+
+      var rnds = options.random || (options.rng || rngBrowser)();
+
+      // Per 4.4, set bits for version and `clock_seq_hi_and_reserved`
+      rnds[6] = (rnds[6] & 0x0f) | 0x40;
+      rnds[8] = (rnds[8] & 0x3f) | 0x80;
+
+      // Copy bytes to buffer, if provided
+      if (buf) {
+        for (var ii = 0; ii < 16; ++ii) {
+          buf[i + ii] = rnds[ii];
+        }
+      }
+
+      return buf || bytesToUuid_1(rnds);
+    }
+
+    var v4_1 = v4;
+
+    var uuid = v4_1;
+    uuid.v1 = v1_1;
+    uuid.v4 = v4_1;
+
+    var uuid_1 = uuid;
+
+    var EventType;
+    (function (EventType) {
+        EventType[EventType["ADD"] = 0] = "ADD";
+        EventType[EventType["REMOVE"] = 1] = "REMOVE";
+    })(EventType || (EventType = {}));
+    function addGameObject(gameObjectData) {
+        addObject$.next(gameObjectData);
+    }
     var addObject$ = new Subject();
     var removeObject$ = new Subject();
     var onAddObjectEvent$ = merge(addObject$).pipe(filter(function () { return true; }), // TODO sanitize
-    map(function (obj) { return ({
+    map(function (obj) {
+        var gameObject = obj;
+        gameObject.id = uuid_1();
+        if (!gameObject.velocity) {
+            gameObject.velocity = { x: 0, y: 0 };
+        }
+        return gameObject;
+    }), map(function (obj) { return ({
         data: obj,
-        type: "add",
+        type: EventType.ADD,
     }); }));
-    var onRemoveObjectEvent$ = removeObject$.pipe(filter(function (obj) { return true; }), // TODO sanitize
-    map(function (obj) { return ({
-        data: obj,
-        type: "remove",
+    var onRemoveObjectEvent$ = removeObject$.pipe(filter(function (id) { return true; }), // TODO sanitize
+    map(function (id) { return ({
+        data: id,
+        type: EventType.REMOVE,
     }); }));
     var objects$ = merge(onAddObjectEvent$, onRemoveObjectEvent$).pipe(scan(function (store, item) {
-        var obj = item.data;
         switch (item.type) {
-            case "add":
+            case EventType.ADD:
+                var obj = item.data;
                 return store.set(obj.id, obj);
-            case "remove":
-                store.delete(obj.id);
+            case EventType.REMOVE:
+                var id = item.data;
+                if (id) {
+                    store.delete(id);
+                }
                 break;
         }
         return store;
@@ -6006,6 +6255,40 @@
         renderer$.subscribe(drawFunction);
     }
 
+    function bulletFactory(player, velocity) {
+        if (velocity === void 0) { velocity = { x: 0, y: -2 }; }
+        return ({
+            name: "bullet",
+            location: { x: player.location.x, y: player.location.y - player.size.y },
+            size: { x: 10, y: 10 },
+            velocity: velocity,
+            draw: function (gameObjects, canvas, context) {
+                var position = gameObjects.location;
+                var size = gameObjects.size;
+                context.beginPath();
+                context.rect(position.x - (size.x / 2), position.y - (size.y / 2), size.x, size.y);
+                context.fill();
+                context.closePath();
+            },
+        });
+    }
+    function playerFactory() {
+        return ({
+            name: "player",
+            location: { x: 5, y: 500 - 30 },
+            size: { x: 40, y: 20 },
+            draw: function (gameObject, canvas, context) {
+                var position = gameObject.location;
+                var size = gameObject.size;
+                context.beginPath();
+                context.rect(position.x - size.x / 2, position.y, size.x, size.y);
+                context.rect(position.x - (size.x / 2) / 2, position.y - (size.y / 2), size.x / 2, size.y / 2);
+                context.fill();
+                context.closePath();
+            },
+        });
+    }
+
     // tslint:disable:no-console
     initRenderer("game", DEFAULT_DRAW_SPRITE);
     combineLatest(ticker$, objects$)
@@ -6019,52 +6302,47 @@
             element.location.y += element.velocity.y;
         });
     });
-    combineLatest(ticker$, input$, objects$)
-        .pipe(sample(ticker$))
-        .subscribe(function (_a) {
+    var inputWithObjects = combineLatest(ticker$, input$, objects$)
+        .pipe(sample(ticker$), map(function (_a) {
         var time = _a[0], keys = _a[1], objects = _a[2];
-        var player = objects.get("player");
-        if (player) {
-            if (keys.includes("d")) {
-                player.velocity.x = 5;
-            }
-            else if (keys.includes("a")) {
-                player.velocity.x = -5;
-            }
-            else {
-                player.velocity.x = 0;
-            }
-            if (keys.includes("w")) {
-                addObject$.next({
-                    draw: function (gameObjects, canvas, context) {
-                        var position = gameObjects.location;
-                        var WIDTH = 20;
-                        var HEIGHT = 20;
-                        context.beginPath();
-                        context.rect(position.x - WIDTH / 2, position.y, WIDTH, HEIGHT);
-                        context.fill();
-                        context.closePath();
-                    },
-                    id: "bullet",
-                    location: { x: player.location.x, y: player.location.y - 40 },
-                    velocity: { x: player.velocity.x, y: -2 },
-                });
-            }
+        return ({ keys: keys, objects: objects });
+    }));
+    var playerControl = inputWithObjects.pipe(map(function (_a) {
+        var keys = _a.keys, objects = _a.objects;
+        var player = Array.from(objects.values()).find(function (gameObject) { return gameObject.name === "player"; });
+        return ({ keys: keys, player: player });
+    }), filter(function (_a) {
+        var player = _a.player;
+        return !!player;
+    }));
+    playerControl.pipe(filter(function (_a) {
+        var keys = _a.keys;
+        return !keys.includes("a") && !keys.includes("d");
+    }), map(function (_a) {
+        var player = _a.player;
+        return player;
+    })).subscribe(function (player) { return player.velocity.x = 0; });
+    getStreamForInput("w").pipe(throttleTime(500)).subscribe(function (player) { return addGameObject(bulletFactory(player)); });
+    getStreamForInput("a").subscribe(function (player) { return player.velocity.x = -5; });
+    getStreamForInput("d").subscribe(function (player) { return player.velocity.x = 5; });
+    getStreamForInput("s").pipe(throttleTime(1000)).subscribe(function (player) {
+        addGameObject(bulletFactory(player));
+        addGameObject(bulletFactory(player, { x: -2, y: -2 }));
+        addGameObject(bulletFactory(player, { x: 2, y: -2 }));
+    });
+    addGameObject(playerFactory());
+    function getStreamForInput() {
+        var lookingFor = [];
+        for (var _i = 0; _i < arguments.length; _i++) {
+            lookingFor[_i] = arguments[_i];
         }
-    });
-    addObject$.next({
-        draw: function (gameObject, canvas, context) {
-            var position = gameObject.location;
-            var PADDLE_WIDTH = 100;
-            var PADDLE_HEIGHT = 20;
-            context.beginPath();
-            context.rect(position.x - PADDLE_WIDTH / 2, position.y, PADDLE_WIDTH, PADDLE_HEIGHT);
-            context.fill();
-            context.closePath();
-        },
-        id: "player",
-        location: { x: 0, y: 500 - 20 },
-        velocity: { x: 0, y: 0 },
-    });
+        return playerControl.pipe(filter(function (_a) {
+            var keys = _a.keys;
+            return keys.some(function (key) { return lookingFor.includes(key); });
+        }), map(function (_a) {
+            var player = _a.player;
+            return player;
+        }));
+    }
 
 }());
