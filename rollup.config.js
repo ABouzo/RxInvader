@@ -18,14 +18,6 @@ export default [
                 main: true,
                 preferBuiltins: false,
             }),
-            // HACK: removes craftyjs's attempt to overwrite `require`
-            replace({
-                include: "node_modules/craftyjs",
-                delimiters: ['', ''],
-                values: {
-                    'require = requireNew;': '',
-                }
-            }),
             commonjs(),
             typescript({
                 target: "ES5"
